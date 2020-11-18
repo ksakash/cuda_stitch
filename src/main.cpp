@@ -1,5 +1,6 @@
 #include <math.h>
 #include <iostream>
+#include <fstream>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
@@ -16,6 +17,17 @@
 #define PI 3.141592653589793238
 
 using namespace Eigen;
+
+struct imageData {
+    std::string imageName = "";
+    double latitude = 0;
+    double longitude = 0;
+    double altitudeFeet = 0;
+    double altitudeMeter = 0;
+    double roll = 0;
+    double pitch = 0;
+    double yaw = 0;
+};
 
 cv::Mat computeUnRotMatrix (std::vector<int>& pose) {
     float a = pose[3] * PI / 180;
@@ -131,8 +143,10 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     for (int i = 0; i < 4; i++) {
         float cornerX = corners2[i][0];
         float cornerY = corners2[i][1];
-        warpedCorners2[i][0] = A.at<double> (0,0) * cornerX + A.at<double> (0,1) * cornerY + A.at<double> (0.2);
-        warpedCorners2[i][1] = A.at<double> (1,0) * cornerX + A.at<double> (1,1) * cornerY + A.at<double> (1,2);
+        warpedCorners2[i][0] = A.at<double> (0,0) * cornerX +
+                            A.at<double> (0,1) * cornerY + A.at<double> (0.2);
+        warpedCorners2[i][1] = A.at<double> (1,0) * cornerX +
+                            A.at<double> (1,1) * cornerY + A.at<double> (1,2);
         allCorners.push_back (warpedCorners2[i]);
     }
 
@@ -178,6 +192,44 @@ cv::Mat combine () {
         cv::resize (result, result, cv::Size (w, h));
     }
     return result;
+}
+
+void readData (std::string& filename,
+               std::vector<imageData>& dataMatrix) {
+    std::ifstream file;
+    file.open (filename);
+    if (file.is_open()) {
+        std::string line;
+        while (getline (file, line)) {
+            std::stringstream ss (line);
+            std::string word;
+            imageData id;
+            int i = 0;
+            while (getline (ss, word, ',')) {
+                if (i == 0)	{ id.imageName = word; }
+                else if (i == 1) { id.latitude = stof(word); }
+                else if (i == 2) { id.longitude = stof(word); }
+                else if (i == 3) {
+                    id.altitudeFeet = stof (word);
+                    id.altitudeMeter = id.altitudeFeet * 0.3048;
+                }
+                else if (i == 4) { id.yaw = stof(word); }
+                else if (i == 5) { id.pitch = stof(word); }
+                else if (i == 6) { id.roll = stof(word); }
+                i++;
+            }
+        }
+    }
+}
+
+void getImageList (std::vector<cv::Mat>& imageList,
+                   std::vector<imageData>& dataMatrix,
+                   std::string base_path) {
+    for (auto data : dataMatrix) {
+        std::string img_path = base_path + "/images/" + data.imageName;
+        cv::Mat img = cv::imread (img_path, 1);
+        imageList.push_back (img);
+    }
 }
 
 int main () {
