@@ -57,7 +57,7 @@ void warpPerspectiveWithPadding (const cv::Mat& image, cv::Mat& transformation,
     dst = result;
 }
 
-void combinePair (const cv::Mat& img1, const cv::Mat& img2, cv::Mat& ret) {
+void combinePair (cv::Mat& img1, cv::Mat& img2) {
     cv::cuda::GpuMat img1_gpu (img1), img2_gpu (img2);
     cv::cuda::GpuMat img1_gray_gpu, img2_gray_gpu;
 
@@ -124,26 +124,46 @@ void combinePair (const cv::Mat& img1, const cv::Mat& img2, cv::Mat& ret) {
     }
 
     sort (allCorners.begin(), allCorners.end());
-    vector<float> minm = {allCorners[0][0] - 0.5, allCorners[0][1] - 0.5};
-    vector<float> maxm = {allCorners[7][0] + 0.5, allCorners[7][1] + 0.5};
+    float minX = allCorners[0][0] - 0.5, minY = allCorners[0][1] - 0.5;
+    float maxX = allCorners[7][0] + 0.5, maxY = allCorners[7][1] + 0.5;
 
-    cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -minm[0], 0, 1, -minm[1], 0, 0, 1);
+    cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -minX, 0, 1, -minY, 0, 0, 1);
     cv::cuda::GpuMat warpedImageTemp;
     cv::cuda::warpPerspective (img2_gpu, warpedImageTemp, cv::cuda::GpuMat (translation),
-                                cv::Size (maxm[0] - minm[0], maxm[1] - minm[1]));
+                                cv::Size (maxX - minX, maxY - minY));
     cv::cuda::GpuMat warpedImage2;
     cv::cuda::warpAffine (warpedImageTemp, warpedImage2, cv::cuda::GpuMat (A),
-                          cv::Size (maxm[0] - minm[0], maxm[1] - minm[1]));
+                          cv::Size (maxX - minX, maxY - minY));
     cv::cuda::GpuMat dst;
     cv::cuda::addWeighted (img1_gpu, 1, warpedImage2, 0, 0, dst);
+    cv::Mat ret = dst;
 
-    ret = dst;
-
-    // https://stackoverflow.com/questions/19068085/shift-image-content-with-opencv
-    // Mat trans_mat = (Mat_<double>(2,3) << 1, 0, offsetx, 0, 1, offsety);
+    return ret;
 }
 
-// combine () {}
+cv::Mat combine () {
+    vector<cv::Mat> imageList = {};
+    cv::Mat result = imageList[0];
+    for (int i = 1; i < imageList.size(); i++) {
+        cv::Mat image = imageList[i];
+        result = combinePair (result, image);
+        float h = result.row(), w = result.col();
+        if (h > 4000 && w > 4000) {
+            if (h > 4000) {
+                float hx = 4000/h;
+                h = h * hx;
+                w = w * hx;
+            }
+            else if (w > 4000) {
+                float wx = 4000/w;
+                w = w * wx;
+                h = h * wx;
+            }
+        }
+        cv::resize (result, result, cv::Size (w, h));
+    }
+    return result;
+}
 
 int main () {
     return 0;
