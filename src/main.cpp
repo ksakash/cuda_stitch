@@ -16,7 +16,7 @@
 
 #include <Eigen/Dense>
 
-#define PI 3.141592653589793238
+#define PI 3.14285714286
 
 using namespace Eigen;
 using namespace std;
@@ -34,27 +34,27 @@ struct imageData {
 };
 
 cv::Mat computeUnRotMatrix (imageData& pose) {
-    float a = pose.yaw * PI / 180;
-    float b = pose.roll * PI / 180;
-    float g = pose.pitch * PI / 180;
-    Matrix3f Rz;
+    double a = (pose.yaw * PI) / 180;
+    double b = (pose.pitch * PI) / 180;
+    double g = (pose.roll * PI) / 180;
+    Matrix3d Rz;
     Rz << cos (a), -sin (a), 0,
           sin (a), cos (a), 0,
           0, 0, 1;
-    Matrix3f Ry;
+    Matrix3d Ry;
     Ry << cos (b), 0, sin (b),
           0, 1, 0,
           -sin (b), 0, cos (b);
-    Matrix3f Rx;
+    Matrix3d Rx;
     Rx << 1, 0, 0,
           0, cos (g), -sin (g),
           0, sin (g), cos (g);
-    Matrix3f R = Rz * (Rx * Ry);
+    Matrix3d R = Rz * (Rx * Ry);
     R(0,2) = 0;
     R(1,2) = 0;
     R(2,2) = 1;
-    Matrix3f Rtrans = R.transpose ();
-    Matrix3f InvR = Rtrans.inverse ();
+    Matrix3d Rtrans = R.transpose ();
+    Matrix3d InvR = Rtrans.inverse ();
     cv::Mat transformation = (cv::Mat_<double>(3,3) << InvR(0,0), InvR(0,1), InvR(0,2),
                                                        InvR(1,0), InvR(1,1), InvR(1,2),
                                                        InvR(2,0), InvR(2,1), InvR(2,2));
@@ -122,12 +122,8 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     cv::Ptr<cv::cuda::SURF_CUDA> detector = cv::cuda::SURF_CUDA::create (1000);
 
     cv::cuda::GpuMat keypoints1_gpu, descriptors1_gpu;
-    // auto start = high_resolution_clock::now();
     detector->detectWithDescriptors (img1_gray_gpu, mask1,
                                     keypoints1_gpu, descriptors1_gpu);
-    // auto end = high_resolution_clock::now();
-    // auto duration = duration_cast<microseconds> (end-start);
-    // cout << "time taken by the functions: " << duration.count() << endl;
     std::vector<cv::KeyPoint> keypoints1;
     detector->downloadKeypoints (keypoints1_gpu, keypoints1);
 
@@ -232,21 +228,27 @@ cv::Mat combine (std::vector<cv::Mat>& imageList) {
     cv::Mat result = imageList[0];
     for (int i = 1; i < imageList.size(); i++) {
         cv::Mat image = imageList[i];
+        cout << i << endl;
+        auto start = high_resolution_clock::now();
         result = combinePair (result, image);
+        auto end = high_resolution_clock::now();
+        auto duration = duration_cast<microseconds> (end-start);
+        cout << "time taken by the functions: " << duration.count() << endl;
         float h = result.rows;
         float w = result.cols;
-        if (h > 4000 && w > 4000) {
+        if (h > 4000 || w > 4000) {
             if (h > 4000) {
-                float hx = 4000/h;
+                float hx = 4000.0/h;
                 h = h * hx;
                 w = w * hx;
             }
             else if (w > 4000) {
-                float wx = 4000/w;
+                float wx = 4000.0/w;
                 w = w * wx;
                 h = h * wx;
             }
         }
+        cout << h << " " << w << endl;
         cv::resize (result, result, cv::Size (w, h));
     }
     return result;
