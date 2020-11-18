@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <string>
 
 #include <opencv2/opencv.hpp>
 
@@ -29,10 +30,10 @@ struct imageData {
     double yaw = 0;
 };
 
-cv::Mat computeUnRotMatrix (std::vector<int>& pose) {
-    float a = pose[3] * PI / 180;
-    float b = pose[4] * PI / 180;
-    float g = pose[5] * PI / 180;
+cv::Mat computeUnRotMatrix (imageData& pose) {
+    float a = pose.yaw * PI / 180;
+    float b = pose.roll * PI / 180;
+    float g = pose.pitch * PI / 180;
     Matrix3f Rz;
     Rz << cos (a), -sin (a), 0,
           sin (a), cos (a), 0,
@@ -230,6 +231,19 @@ void getImageList (std::vector<cv::Mat>& imageList,
         cv::Mat img = cv::imread (img_path, 1);
         imageList.push_back (img);
     }
+}
+
+void changePerspective (std::vector<cv::Mat>& imageList,
+                        std::vector<imageData>& dataMatrix) {
+    std::cout << "Warping Images Now" << std::endl;
+    int n = imageList.size();
+    for (int i = 0; i < n; i++) {
+        cv::Mat M = computeUnRotMatrix (dataMatrix[i]);
+        cv::Mat correctedImage;
+        warpPerspectiveWithPadding (imageList[i], M, correctedImage);
+        cv::imwrite ("temp/"+std::to_string (i)+".png", correctedImage);
+    }
+    std::cout << "Image Warping Done" << std::endl;
 }
 
 int main () {
