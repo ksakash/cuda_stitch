@@ -3,6 +3,7 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <chrono>
 
 #include <opencv2/opencv.hpp>
 
@@ -19,6 +20,7 @@
 
 using namespace Eigen;
 using namespace std;
+using namespace std::chrono;
 
 struct imageData {
     std::string imageName = "";
@@ -104,6 +106,7 @@ cv::Mat warpPerspectiveWithPadding (const cv::Mat& image, cv::Mat& transformatio
 }
 
 cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
+
     cv::cuda::GpuMat img1_gpu (img1), img2_gpu (img2);
     cv::cuda::GpuMat img1_gray_gpu, img2_gray_gpu;
 
@@ -119,23 +122,26 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     cv::Ptr<cv::cuda::SURF_CUDA> detector = cv::cuda::SURF_CUDA::create (1000);
 
     cv::cuda::GpuMat keypoints1_gpu, descriptors1_gpu;
+    // auto start = high_resolution_clock::now();
     detector->detectWithDescriptors (img1_gray_gpu, mask1,
                                     keypoints1_gpu, descriptors1_gpu);
+    // auto end = high_resolution_clock::now();
+    // auto duration = duration_cast<microseconds> (end-start);
+    // cout << "time taken by the functions: " << duration.count() << endl;
     std::vector<cv::KeyPoint> keypoints1;
-    detector->uploadKeypoints (keypoints1, keypoints1_gpu);
+    detector->downloadKeypoints (keypoints1_gpu, keypoints1);
 
     cv::cuda::GpuMat keypoints2_gpu, descriptors2_gpu;
     detector->detectWithDescriptors (img2_gray_gpu, mask2,
                                     keypoints2_gpu, descriptors2_gpu);
     std::vector<cv::KeyPoint> keypoints2;
-    detector->uploadKeypoints (keypoints2, keypoints2_gpu);
+    detector->downloadKeypoints (keypoints2_gpu, keypoints2);
 
     cv::Ptr<cv::cuda::DescriptorMatcher> matcher =
-        cv::cuda::DescriptorMatcher::createBFMatcher (cv::NORM_HAMMING);
+        cv::cuda::DescriptorMatcher::createBFMatcher ();
 
     std::vector<std::vector<cv::DMatch>> knn_matches;
     matcher->knnMatch (descriptors2_gpu, descriptors1_gpu, knn_matches, 2);
-    std::cout << "knn_matches=" << knn_matches.size() << std::endl;
 
     std::vector<cv::DMatch> matches;
     std::vector<std::vector<cv::DMatch>>::const_iterator it;
@@ -153,8 +159,8 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     }
 
     cv::Mat A = cv::estimateRigidTransform(src_pts, dst_pts, false);
-    float height1 = img1.rows, width1 = img1.cols;
-    float height2 = img2.rows, width2 = img2.cols;
+    int height1 = img1.rows, width1 = img1.cols;
+    int height2 = img2.rows, width2 = img2.cols;
 
     std::vector<std::vector<float>> corners1 {{0,0},{0,height1},{width1,height1},{width1,0}};
     std::vector<std::vector<float>> corners2 {{0,0},{0,height2},{width2,height2},{width2,0}};
@@ -166,7 +172,7 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
         float cornerX = corners2[i][0];
         float cornerY = corners2[i][1];
         warpedCorners2[i][0] = A.at<double> (0,0) * cornerX +
-                            A.at<double> (0,1) * cornerY + A.at<double> (0.2);
+                            A.at<double> (0,1) * cornerY + A.at<double> (0,2);
         warpedCorners2[i][1] = A.at<double> (1,0) * cornerX +
                             A.at<double> (1,1) * cornerY + A.at<double> (1,2);
         allCorners.push_back (warpedCorners2[i]);
@@ -174,11 +180,11 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
 
     float xMin = 1e9, xMax = -1e9;
     float yMin = 1e9, yMax = -1e9;
-    for (int i = 0; i < 4; i++) {
-        xMin = (xMin > warpedCorners[i].x)? warpedCorners[i].x : xMin;
-        xMax = (xMax < warpedCorners[i].x)? warpedCorners[i].x : xMax;
-        yMin = (yMin > warpedCorners[i].y)? warpedCorners[i].y : yMin;
-        yMax = (yMax < warpedCorners[i].y)? warpedCorners[i].y : yMax;
+    for (int i = 0; i < 7; i++) {
+        xMin = (xMin > allCorners[i][0])? allCorners[i][0] : xMin;
+        xMax = (xMax < allCorners[i][0])? allCorners[i][0] : xMax;
+        yMin = (yMin > allCorners[i][1])? allCorners[i][1] : yMin;
+        yMax = (yMax < allCorners[i][1])? allCorners[i][1] : yMax;
     }
     int xMin_ = (xMin - 0.5);
     int xMax_ = (xMax + 0.5);
@@ -186,17 +192,39 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     int yMax_ = (yMax + 0.5);
 
     cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -xMin_, 0, 1, -yMin_, 0, 0, 1);
+
+    cv::cuda::GpuMat warpedResImg;
+    cv::cuda::warpPerspective (img1_gpu, warpedResImg, translation,
+                               cv::Size (xMax_-xMin_, yMax_-yMin_));
+
     cv::cuda::GpuMat warpedImageTemp;
     cv::cuda::warpPerspective (img2_gpu, warpedImageTemp, translation,
                                 cv::Size (xMax_ - xMin_, yMax_ - yMin_));
     cv::cuda::GpuMat warpedImage2;
     cv::cuda::warpAffine (warpedImageTemp, warpedImage2, A,
                           cv::Size (xMax_ - xMin_, yMax_ - yMin_));
-    cv::cuda::GpuMat dst;
-    cv::cuda::addWeighted (img1_gpu, 1, warpedImage2, 0, 0, dst);
+
+    cv::cuda::GpuMat mask;
+    cv::cuda::threshold (warpedImage2, mask, 1, 255, cv::THRESH_BINARY);
+    int type = warpedResImg.type();
+
+    warpedResImg.convertTo (warpedResImg, CV_32FC3);
+    warpedImage2.convertTo (warpedImage2, CV_32FC3);
+    mask.convertTo (mask, CV_32FC3, 1.0/255);
+    cv::Mat mask_;
+    mask.download (mask_);
+
+    cv::cuda::GpuMat dst (warpedImage2.size(), warpedImage2.type());
+    cv::cuda::multiply (mask, warpedImage2, warpedImage2);
+
+    cv::Mat diff_ = cv::Scalar::all (1.0) - mask_;
+    cv::cuda::GpuMat diff (diff_);
+    cv::cuda::multiply(diff, warpedResImg, warpedResImg);
+    cv::cuda::add (warpedResImg, warpedImage2, dst);
+    dst.convertTo (dst, type);
+
     cv::Mat ret;
     dst.download (ret);
-
     return ret;
 }
 
@@ -259,6 +287,8 @@ void getImageList (std::vector<cv::Mat>& imageList,
     for (auto data : dataMatrix) {
         std::string img_path = base_path + data.imageName;
         cv::Mat img = cv::imread (img_path, 1);
+        // cout << img.empty () << endl;
+        // cout << img_path << endl;
         imageList.push_back (img);
     }
 }
@@ -272,7 +302,7 @@ void changePerspective (std::vector<cv::Mat>& imageList,
         cv::Mat correctedImage = warpPerspectiveWithPadding (imageList[i], M);
 
         cv::imwrite ("/home/ksakash/misc/Drone-Image-Stitching/temp/"
-                     +dataMatrix[i].imageName+".png", correctedImage);
+                     +dataMatrix[i].imageName, correctedImage);
     }
     std::cout << "Image Warping Done" << std::endl;
 }
@@ -289,6 +319,6 @@ int main () {
     base_path = "/home/ksakash/misc/Drone-Image-Stitching/temp/";
     getImageList (imageList, dataMatrix, base_path);
     cv::Mat result = combine (imageList);
-    cv::imwrite ("/home/ksakash/misc/Drone-Image-Stitching/result/result.png", result);
+    cv::imwrite ("/home/ksakash/misc/Drone-Image-Stitching/results/result.png", result);
     return 0;
 }
