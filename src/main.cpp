@@ -18,6 +18,7 @@
 #define PI 3.141592653589793238
 
 using namespace Eigen;
+using namespace std;
 
 struct imageData {
     std::string imageName = "";
@@ -58,28 +59,48 @@ cv::Mat computeUnRotMatrix (imageData& pose) {
     return transformation;
 }
 
-bool cmp (cv::Point2f& a, cv::Point2f& b) {
-    return (a.x == b.x)? a.y < b.y : a.x < b.x;
+void printMat (cv::Mat& mat) {
+    int rows = mat.rows;
+    int cols = mat.cols;
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            std::cout << mat.at<double>(i,j) << " ";
+        }
+        std::cout << std::endl;
+    }
 }
 
-void warpPerspectiveWithPadding (const cv::Mat& image, cv::Mat& transformation,
-                                 cv::Mat& dst) {
+cv::Mat warpPerspectiveWithPadding (const cv::Mat& image, cv::Mat& transformation) {
     int height = image.rows;
     int width = image.cols;
-    std::vector<cv::Point2f> corners = {cv::Point2f (0,0), cv::Point2f (0,height),
-                                   cv::Point2f (width,height), cv::Point2f (width,0)};
+    cv::Mat small_img;
+    cv::resize (image, small_img, cv::Size (width/2, height/2));
+    std::vector<cv::Point2f> corners = {cv::Point2f (0,0), cv::Point2f (0,height/2),
+                                   cv::Point2f (width/2,height/2), cv::Point2f (width/2,0)};
     std::vector<cv::Point2f> warpedCorners;
     cv::perspectiveTransform (corners, warpedCorners, transformation);
-    sort (warpedCorners.begin(), warpedCorners.end(), cmp);
-    float xMin = warpedCorners[0].x - 0.5, yMin = warpedCorners[0].y - 0.5;
-    float xMax = warpedCorners[3].x + 0.5, yMax = warpedCorners[3].y + 0.5;
-    cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -xMin, 0, 1, -yMin, 0, 0, 1);
+    float xMin = 1e9, xMax = -1e9;
+    float yMin = 1e9, yMax = -1e9;
+    for (int i = 0; i < 4; i++) {
+        xMin = (xMin > warpedCorners[i].x)? warpedCorners[i].x : xMin;
+        xMax = (xMax < warpedCorners[i].x)? warpedCorners[i].x : xMax;
+        yMin = (yMin > warpedCorners[i].y)? warpedCorners[i].y : yMin;
+        yMax = (yMax < warpedCorners[i].y)? warpedCorners[i].y : yMax;
+    }
+    int xMin_ = (xMin - 0.5);
+    int xMax_ = (xMax + 0.5);
+    int yMin_ = (yMin - 0.5);
+    int yMax_ = (yMax + 0.5);
+    cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -xMin_, 0, 1, -yMin_, 0, 0, 1);
     cv::Mat fullTransformation = translation * transformation;
     cv::cuda::GpuMat result;
-    cv::cuda::warpPerspective (cv::cuda::GpuMat (image), result,
-                               cv::cuda::GpuMat (fullTransformation),
-                               cv::Size (xMax-xMin, yMax-yMin));
-    result.upload (dst);
+    cv::cuda::GpuMat gpu_img (small_img);
+    cv::cuda::GpuMat gpu_ft (fullTransformation);
+    cv::cuda::warpPerspective (gpu_img, result, fullTransformation,
+                                cv::Size (xMax_-xMin_, yMax_-yMin_));
+    cv::Mat result_ (result.size(), result.type());
+    result.download (result_);
+    return result_;
 }
 
 cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
@@ -151,27 +172,35 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
         allCorners.push_back (warpedCorners2[i]);
     }
 
-    sort (allCorners.begin(), allCorners.end());
-    float minX = allCorners[0][0] - 0.5, minY = allCorners[0][1] - 0.5;
-    float maxX = allCorners[7][0] + 0.5, maxY = allCorners[7][1] + 0.5;
+    float xMin = 1e9, xMax = -1e9;
+    float yMin = 1e9, yMax = -1e9;
+    for (int i = 0; i < 4; i++) {
+        xMin = (xMin > warpedCorners[i].x)? warpedCorners[i].x : xMin;
+        xMax = (xMax < warpedCorners[i].x)? warpedCorners[i].x : xMax;
+        yMin = (yMin > warpedCorners[i].y)? warpedCorners[i].y : yMin;
+        yMax = (yMax < warpedCorners[i].y)? warpedCorners[i].y : yMax;
+    }
+    int xMin_ = (xMin - 0.5);
+    int xMax_ = (xMax + 0.5);
+    int yMin_ = (yMin - 0.5);
+    int yMax_ = (yMax + 0.5);
 
-    cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -minX, 0, 1, -minY, 0, 0, 1);
+    cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -xMin_, 0, 1, -yMin_, 0, 0, 1);
     cv::cuda::GpuMat warpedImageTemp;
-    cv::cuda::warpPerspective (img2_gpu, warpedImageTemp, cv::cuda::GpuMat (translation),
-                                cv::Size (maxX - minX, maxY - minY));
+    cv::cuda::warpPerspective (img2_gpu, warpedImageTemp, translation,
+                                cv::Size (xMax_ - xMin_, yMax_ - yMin_));
     cv::cuda::GpuMat warpedImage2;
-    cv::cuda::warpAffine (warpedImageTemp, warpedImage2, cv::cuda::GpuMat (A),
-                          cv::Size (maxX - minX, maxY - minY));
+    cv::cuda::warpAffine (warpedImageTemp, warpedImage2, A,
+                          cv::Size (xMax_ - xMin_, yMax_ - yMin_));
     cv::cuda::GpuMat dst;
     cv::cuda::addWeighted (img1_gpu, 1, warpedImage2, 0, 0, dst);
     cv::Mat ret;
-    dst.upload (ret);
+    dst.download (ret);
 
     return ret;
 }
 
-cv::Mat combine () {
-    std::vector<cv::Mat> imageList = {};
+cv::Mat combine (std::vector<cv::Mat>& imageList) {
     cv::Mat result = imageList[0];
     for (int i = 1; i < imageList.size(); i++) {
         cv::Mat image = imageList[i];
@@ -219,6 +248,7 @@ void readData (std::string& filename,
                 else if (i == 6) { id.roll = stof(word); }
                 i++;
             }
+            dataMatrix.push_back (id);
         }
     }
 }
@@ -227,7 +257,7 @@ void getImageList (std::vector<cv::Mat>& imageList,
                    std::vector<imageData>& dataMatrix,
                    std::string base_path) {
     for (auto data : dataMatrix) {
-        std::string img_path = base_path + "/images/" + data.imageName;
+        std::string img_path = base_path + data.imageName;
         cv::Mat img = cv::imread (img_path, 1);
         imageList.push_back (img);
     }
@@ -239,13 +269,26 @@ void changePerspective (std::vector<cv::Mat>& imageList,
     int n = imageList.size();
     for (int i = 0; i < n; i++) {
         cv::Mat M = computeUnRotMatrix (dataMatrix[i]);
-        cv::Mat correctedImage;
-        warpPerspectiveWithPadding (imageList[i], M, correctedImage);
-        cv::imwrite ("temp/"+std::to_string (i)+".png", correctedImage);
+        cv::Mat correctedImage = warpPerspectiveWithPadding (imageList[i], M);
+
+        cv::imwrite ("/home/ksakash/misc/Drone-Image-Stitching/temp/"
+                     +dataMatrix[i].imageName+".png", correctedImage);
     }
     std::cout << "Image Warping Done" << std::endl;
 }
 
 int main () {
+    std::string filename = "/home/ksakash/misc/Drone-Image-Stitching/datasets/imageData.txt";
+    std::vector<imageData> dataMatrix;
+    readData (filename, dataMatrix);
+    std::vector<cv::Mat> imageList;
+    std::string base_path = "/home/ksakash/misc/Drone-Image-Stitching/datasets/images/";
+    getImageList (imageList, dataMatrix, base_path);
+    changePerspective (imageList, dataMatrix);
+    imageList.clear();
+    base_path = "/home/ksakash/misc/Drone-Image-Stitching/temp/";
+    getImageList (imageList, dataMatrix, base_path);
+    cv::Mat result = combine (imageList);
+    cv::imwrite ("/home/ksakash/misc/Drone-Image-Stitching/result/result.png", result);
     return 0;
 }
