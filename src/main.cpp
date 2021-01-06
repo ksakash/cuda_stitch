@@ -119,19 +119,19 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     cv::cuda::threshold (img1_gray_gpu, mask1, 1, 255, cv::THRESH_BINARY);
     cv::cuda::threshold (img2_gray_gpu, mask2, 1, 255, cv::THRESH_BINARY);
 
-    cv::Ptr<cv::cuda::SURF_CUDA> detector = cv::cuda::SURF_CUDA::create (1000);
+    cv::cuda::SURF_CUDA detector;
 
     cv::cuda::GpuMat keypoints1_gpu, descriptors1_gpu;
-    detector->detectWithDescriptors (img1_gray_gpu, mask1,
-                                    keypoints1_gpu, descriptors1_gpu);
+    detector (img1_gray_gpu, mask1, keypoints1_gpu, descriptors1_gpu);
+    
     std::vector<cv::KeyPoint> keypoints1;
-    detector->downloadKeypoints (keypoints1_gpu, keypoints1);
+    detector.downloadKeypoints (keypoints1_gpu, keypoints1);
 
     cv::cuda::GpuMat keypoints2_gpu, descriptors2_gpu;
-    detector->detectWithDescriptors (img2_gray_gpu, mask2,
-                                    keypoints2_gpu, descriptors2_gpu);
+    detector(img2_gray_gpu, mask2, keypoints2_gpu, descriptors2_gpu);
+    
     std::vector<cv::KeyPoint> keypoints2;
-    detector->downloadKeypoints (keypoints2_gpu, keypoints2);
+    detector.downloadKeypoints (keypoints2_gpu, keypoints2);
 
     cv::Ptr<cv::cuda::DescriptorMatcher> matcher =
         cv::cuda::DescriptorMatcher::createBFMatcher ();
