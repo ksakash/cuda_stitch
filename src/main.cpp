@@ -126,7 +126,7 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     }
     cv::cuda::threshold (img2_gray_gpu, mask2, 1, 255, cv::THRESH_BINARY);
 
-    cv::cuda::SURF_CUDA detector (500);
+    cv::cuda::SURF_CUDA detector (1000);
 
     cv::cuda::GpuMat keypoints1_gpu, descriptors1_gpu;
     detector (img1_gray_gpu, mask1, keypoints1_gpu, descriptors1_gpu);
@@ -196,40 +196,41 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     int yMin_ = (yMin - 0.5);
     int yMax_ = (yMax + 0.5);
 
-    // cout << xMin_ << " " << xMax_ << " " << yMin_ << " " << yMax_ << endl;
-
     cv::Mat translation = (cv::Mat_<double>(3,3) << 1, 0, -xMin_, 0, 1, -yMin_, 0, 0, 1);
 
     auto start = high_resolution_clock::now();
     
-    cv::Mat warpedResImg;
-    cv::warpPerspective (img1, warpedResImg, translation,
-                        cv::Size (xMax_-xMin_, yMax_-yMin_));
+    cv::cuda::GpuMat warpedResImg_gpu;
+    cv::cuda::warpPerspective (img1_gpu, warpedResImg_gpu, translation,
+                            cv::Size (xMax_-xMin_, yMax_-yMin_));
 
-    cv::Mat warpedImageTemp;
-    cv::warpPerspective (img2, warpedImageTemp, translation,
+    cv::cuda::GpuMat warpedImageTemp_gpu;
+    cv::cuda::warpPerspective (img2_gpu, warpedImageTemp_gpu, translation,
+                            cv::Size (xMax_ - xMin_, yMax_ - yMin_));
+
+    cv::cuda::GpuMat warpedImage2_gpu;
+    cv::cuda::warpAffine (warpedImageTemp_gpu, warpedImage2_gpu, A,
                         cv::Size (xMax_ - xMin_, yMax_ - yMin_));
 
+    cv::cuda::GpuMat mask_gpu;
+    cv::cuda::threshold (warpedImage2_gpu, mask_gpu, 1, 255, cv::THRESH_BINARY);
+    int type = warpedResImg_gpu.type();
 
-    cv::Mat warpedImage2;
-    cv::warpAffine (warpedImageTemp, warpedImage2, A,
-                    cv::Size (xMax_ - xMin_, yMax_ - yMin_));
-
-    cv::Mat mask;
-    cv::threshold (warpedImage2, mask, 1, 255, cv::THRESH_BINARY);
-    int type = warpedResImg.type();
+    cv::Mat warpedResImg, warpedImageTemp, warpedImage2, mask;
+    
+    warpedResImg_gpu.download (warpedResImg);
+    warpedImageTemp_gpu.download (warpedImageTemp);
+    warpedImage2_gpu.download (warpedImage2);
+    mask_gpu.download (mask);
 
     warpedResImg.convertTo (warpedResImg, CV_32FC3);
     warpedImage2.convertTo (warpedImage2, CV_32FC3);
     mask.convertTo (mask, CV_32FC3, 1.0/255);
-    // cv::Mat mask_;
-    // mask.download (mask_);
 
     cv::Mat dst (warpedImage2.size(), warpedImage2.type());
     cv::multiply (mask, warpedImage2, warpedImage2);
 
     cv::Mat diff = cv::Scalar::all (1.0) - mask;
-    // cv::cuda::GpuMat diff (diff_);
     cv::multiply(diff, warpedResImg, warpedResImg);
     cv::add (warpedResImg, warpedImage2, dst);
     dst.convertTo (dst, type);
@@ -261,8 +262,6 @@ cv::Mat combinePair (cv::Mat& img1, cv::Mat& img2) {
     auto duration = duration_cast<microseconds> (end-start);
     cout << "time taken by the rest of the functions: " << (duration.count()/1000000.0) << endl;
 
-    // cv::Mat ret;
-    // dst.download (ret);
     return dst;
 }
 
